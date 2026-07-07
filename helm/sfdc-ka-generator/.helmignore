@@ -1,0 +1,7 @@
+# .helmignore
+.git/
+.gitignore
+*.md
+tests/
+app/__pycache__/
+*.pyc

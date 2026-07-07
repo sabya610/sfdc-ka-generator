@@ -1,0 +1,84 @@
+# Default values for sfdc-ka-generator.
+
+replicaCount: 1
+
+image:
+  repository: sabya610/sfdc-ka-generator
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+
+service:
+  type: ClusterIP
+  port: 8080
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: ka-generator.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# Application configuration (non-secret) -> rendered into a ConfigMap
+config:
+  SF_URL: "https://hp.my.salesforce.com"
+  KA_BODY_FIELD: "Details__c"
+
+# Secrets. Provide the Salesforce session id (and optional OpenAI key).
+# For production, prefer an existing secret via `existingSecret`.
+secret:
+  # If set, use this pre-created secret instead of creating one from values below.
+  existingSecret: ""
+  # Values below are only used when existingSecret is empty.
+  SF_SID: ""
+  OPENAI_API_KEY: ""
+
+podAnnotations: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 10
+  periodSeconds: 20
+
+readinessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

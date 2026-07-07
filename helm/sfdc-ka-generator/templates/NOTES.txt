@@ -1,0 +1,18 @@
+{{- $fullName := include "sfdc-ka-generator.fullname" . }}
+SFDC Knowledge Article Generator has been deployed.
+
+1. Check pod status:
+   kubectl get pods -l app.kubernetes.io/instance={{ .Release.Name }} -n {{ .Release.Namespace }}
+
+2. Port-forward to reach the UI locally:
+   kubectl port-forward svc/{{ $fullName }} 8080:{{ .Values.service.port }} -n {{ .Release.Namespace }}
+   Then open http://localhost:8080
+
+{{- if not .Values.secret.existingSecret }}
+{{- if not .Values.secret.SF_SID }}
+
+WARNING: No Salesforce session id (secret.SF_SID) was provided. The app will
+return auth errors until you set it:
+   helm upgrade {{ .Release.Name }} <chart> --set secret.SF_SID=<your-sid>
+{{- end }}
+{{- end }}

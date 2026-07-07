@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SFDC Knowledge Article Generator</title>
+  <style>
+    :root { --hpe: #01a982; --bg: #f5f6f8; --ink: #1c1c1c; --line: #d9dce1; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: "Segoe UI", Arial, sans-serif; color: var(--ink); background: var(--bg); }
+    header { background: #000; color: #fff; padding: 14px 24px; display: flex; align-items: center; gap: 14px; }
+    header .logo { color: var(--hpe); font-weight: 800; letter-spacing: 1px; font-size: 20px; }
+    header h1 { font-size: 16px; font-weight: 500; margin: 0; }
+    main { max-width: 1100px; margin: 24px auto; padding: 0 16px; display: grid; grid-template-columns: 360px 1fr; gap: 20px; }
+    .card { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 18px; }
+    h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .5px; color: #555; margin: 0 0 12px; }
+    label { display: block; font-size: 13px; margin: 10px 0 4px; font-weight: 600; }
+    input, select { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; font-size: 14px; }
+    .row { display: flex; gap: 8px; }
+    .checks label { display: flex; align-items: center; gap: 8px; font-weight: 400; margin: 6px 0; }
+    .checks input { width: auto; }
+    button { background: var(--hpe); color: #fff; border: 0; border-radius: 6px; padding: 10px 16px; font-size: 14px; font-weight: 600; cursor: pointer; margin-top: 14px; }
+    button.secondary { background: #33475b; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); }
+    tr:hover td { background: #f0fdf9; cursor: pointer; }
+    .muted { color: #777; font-size: 12px; }
+    pre { white-space: pre-wrap; background: #0d1117; color: #d1d5da; padding: 14px; border-radius: 6px; font-size: 12px; max-height: 420px; overflow: auto; }
+    .pill { display: inline-block; background: #eef; border-radius: 10px; padding: 1px 8px; font-size: 11px; }
+    .err { color: #b00020; font-size: 13px; }
+    .field { margin-bottom: 8px; }
+    .field b { display: block; font-size: 12px; color: #555; }
+  </style>
+</head>
+<body>
+  <header>
+    <span class="logo">HPE</span>
+    <h1>Ezmeral &mdash; SFDC Knowledge Article Generator</h1>
+  </header>
+  <main>
+    <section class="card">
+      <h2>1. Find Cases</h2>
+      <label for="email">User email (case owner)</label>
+      <input id="email" type="email" placeholder="sabyasachi.mallik@hpe.com" />
+
+      <label>Case record types</label>
+      <div class="checks" id="recordTypes">
+        {% for key, names in record_type_groups.items() %}
+        <label><input type="checkbox" value="{{ key }}" checked /> {{ names|join(', ') }}</label>
+        {% endfor %}
+      </div>
+
+      <div class="row">
+        <div style="flex:1"><label for="start">Start date</label><input id="start" type="date" /></div>
+        <div style="flex:1"><label for="end">End date</label><input id="end" type="date" /></div>
+      </div>
+      <button id="findBtn">Find cases</button>
+
+      <label for="product" style="margin-top:18px">Knowledge Article product</label>
+      <select id="product">
+        {% for key, meta in products.items() %}
+        <option value="{{ key }}">{{ meta.label }}</option>
+        {% endfor %}
+      </select>
+
+      <label style="margin-top:10px"><input type="checkbox" id="useLlm" style="width:auto" /> Use LLM drafting (needs OPENAI_API_KEY)</label>
+
+      <label for="caseNum" style="margin-top:18px">Or generate directly by case #</label>
+      <input id="caseNum" type="text" placeholder="5403042067" />
+      <button id="genBtn" class="secondary">Generate KA</button>
+      <p class="err" id="error"></p>
+    </section>
+
+    <section class="card">
+      <h2>2. Results</h2>
+      <div id="caseList"><p class="muted">Enter a user email and click <b>Find cases</b>, or generate directly by case number.</p></div>
+      <div id="article" style="display:none">
+        <h2 style="margin-top:18px">Knowledge Article draft <span class="pill" id="genBadge"></span></h2>
+        <div class="field"><b>Article Type / Product</b><span id="aType"></span></div>
+        <div class="field"><b>Title</b><span id="aTitle"></span></div>
+        <div class="field"><b>URL Name</b><span id="aUrl"></span></div>
+        <pre id="aBody"></pre>
+        <button id="copyBtn" class="secondary">Copy article text</button>
+        <button id="dlBtn" class="secondary">Download .txt</button>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let currentArticle = null;
+
+    function selectedGroups() {
+      return [...document.querySelectorAll('#recordTypes input:checked')].map(c => c.value);
+    }
+    function showError(msg) { $('error').textContent = msg || ''; }
+
+    async function post(url, body) {
+      const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+      return data;
+    }
+
+    $('findBtn').onclick = async () => {
+      showError(''); $('findBtn').disabled = true;
+      try {
+        const data = await post('/api/cases', {
+          email: $('email').value.trim(),
+          record_type_groups: selectedGroups(),
+          start_date: $('start').value || null,
+          end_date: $('end').value || null,
+        });
+        renderCases(data.cases);
+      } catch (e) { showError(e.message); }
+      finally { $('findBtn').disabled = false; }
+    };
+
+    function renderCases(cases) {
+      $('article').style.display = 'none';
+      if (!cases.length) { $('caseList').innerHTML = '<p class="muted">No cases found.</p>'; return; }
+      let html = '<table><thead><tr><th>Case</th><th>Subject</th><th>Type</th><th>Sev</th></tr></thead><tbody>';
+      for (const c of cases) {
+        html += `<tr data-case="${c.case_number}"><td>${c.case_number}</td><td>${c.subject || ''}</td><td>${c.record_type || ''}</td><td>${c.severity || ''}</td></tr>`;
+      }
+      html += '</tbody></table>';
+      $('caseList').innerHTML = html;
+      document.querySelectorAll('#caseList tr[data-case]').forEach(tr => {
+        tr.onclick = () => generate(tr.getAttribute('data-case'));
+      });
+    }
+
+    async function generate(caseNumber) {
+      showError(''); $('genBtn').disabled = true;
+      try {
+        const data = await post('/api/generate', {
+          case_number: caseNumber,
+          product: $('product').value,
+          use_llm: $('useLlm').checked,
+        });
+        currentArticle = data;
+        $('article').style.display = 'block';
+        $('genBadge').textContent = data.generator;
+        $('aType').textContent = `${data.article_type} — ${data.product_label}`;
+        $('aTitle').textContent = data.title;
+        $('aUrl').textContent = data.url_name;
+        $('aBody').textContent = data.body_text;
+      } catch (e) { showError(e.message); }
+      finally { $('genBtn').disabled = false; }
+    }
+
+    $('genBtn').onclick = () => {
+      const n = $('caseNum').value.trim();
+      if (!n) { showError('Enter a case number.'); return; }
+      generate(n);
+    };
+
+    $('copyBtn').onclick = () => navigator.clipboard.writeText(currentArticle.body_text);
+    $('dlBtn').onclick = () => {
+      const blob = new Blob([currentArticle.body_text], { type: 'text/plain' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `KA_${currentArticle.source_case_number || 'draft'}.txt`;
+      a.click();
+    };
+  </script>
+</body>
+</html>

@@ -1,0 +1,3 @@
+# Optional / dev-only dependencies
+pytest==8.2.2
+openai>=1.30.0

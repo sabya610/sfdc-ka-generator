@@ -352,15 +352,19 @@ def collect_resolution_steps(
         # Parse structured format (Issue Summary / Root Cause / Resolution sections)
         parsed = _parse_structured_task(desc)
 
-        # Harvest issue / cause from the first task that provides them
+        # Harvest issue / cause from the first task that provides them (even if
+        # this task's Resolution section is empty — the next task may have it).
         if parsed["issue"] and not extracted_issue:
             extracted_issue = _mask_sensitive(parsed["issue"])
         if parsed["cause"] and not extracted_cause:
             extracted_cause = _mask_sensitive(parsed["cause"])
 
-        # Use only the "Resolution" section as the step body when available;
-        # fall back to the full description otherwise (already stripped of dividers).
-        step_body = _mask_sensitive(parsed["resolution"] or desc)
+        # STRICT: only include tasks that have an explicit "Resolution" section.
+        # Tasks without it contain raw debugging notes (junk), not resolution steps.
+        if not parsed["resolution"]:
+            continue
+
+        step_body = _mask_sensitive(parsed["resolution"])
 
         subject = _clean(task.get("Subject") or "")
         header = f"[Task: {subject}]" if subject else "[Task]"

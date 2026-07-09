@@ -171,6 +171,82 @@ def _split_steps(text: str) -> List[str]:
     return [ln for ln in lines if ln]
 
 
+# ---------------------------------------------------------------------------
+# Sensitive-data masking
+# ---------------------------------------------------------------------------
+_SENSITIVE_PATTERNS = [
+    # IPv4 addresses (e.g. 192.168.1.1 → <IP_ADDR>)
+    (re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b"), "<IP_ADDR>"),
+    # SHA-256 / container/image hashes (40–64 hex chars)
+    (re.compile(r"\b[0-9a-f]{40,64}\b", re.IGNORECASE), "<HASH>"),
+    # UUIDs / pod UIDs
+    (re.compile(
+        r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b",
+        re.IGNORECASE,
+    ), "<UID>"),
+]
+
+
+def _mask_sensitive(text: str) -> str:
+    """Mask IP addresses, UUIDs and hash strings from log / resolution text."""
+    for pattern, replacement in _SENSITIVE_PATTERNS:
+        text = pattern.sub(replacement, text)
+    return text
+
+
+# ---------------------------------------------------------------------------
+# Structured task description parser
+# ---------------------------------------------------------------------------
+# Many HPE task descriptions use a section format separated by ===... dividers:
+#   Issue Summary / Root Cause Analysis / Resolution
+_DIVIDER_RE = re.compile(r"^[=\-]{5,}\s*$")
+_SECTION_MAP: Dict[str, re.Pattern] = {
+    "issue": re.compile(r"^issue(\s+summary)?\s*$", re.IGNORECASE),
+    "cause": re.compile(
+        r"^(root\s+cause(\s+analysis)?|rca|cause)\s*$", re.IGNORECASE
+    ),
+    "resolution": re.compile(
+        r"^(resolution(\s+steps?)?|fix|solution)\s*$", re.IGNORECASE
+    ),
+}
+
+
+def _parse_structured_task(description: str) -> Dict[str, str]:
+    """Parse a structured task description into named sections.
+
+    Returns a dict with keys ``issue``, ``cause``, ``resolution``.
+    Empty strings are returned for sections not found.
+    """
+    sections: Dict[str, str] = {"issue": "", "cause": "", "resolution": ""}
+    current_section: Optional[str] = None
+    buf: List[str] = []
+
+    def _flush() -> None:
+        nonlocal current_section, buf
+        text = "\n".join(buf).strip()
+        if current_section and text and not sections[current_section]:
+            sections[current_section] = text
+        buf = []
+
+    for line in description.splitlines():
+        stripped = line.strip()
+        if _DIVIDER_RE.match(stripped):
+            _flush()
+            current_section = None
+            continue
+        matched = False
+        for sec_key, pattern in _SECTION_MAP.items():
+            if pattern.match(stripped):
+                _flush()
+                current_section = sec_key
+                matched = True
+                break
+        if not matched:
+            buf.append(line)
+    _flush()
+    return sections
+
+
 # Task types that are email correspondence — never useful for a KA.
 _EMAIL_SUBJECT_RE = re.compile(
     r"^(?:email:|re:\s*hpe\s+support\s+case|fw:|fwd:)",
@@ -258,11 +334,13 @@ def collect_resolution_steps(
 
     steps: List[str] = []
     resolution_prefix: List[str] = []
+    extracted_issue: str = ""
+    extracted_cause: str = ""
 
     # Resolution__c is only reliable for closed cases.
     case_status = (case.get("Status") or "").strip().lower()
     if case_status == "closed" and case.get("Resolution__c"):
-        r = _clean(case["Resolution__c"])
+        r = _mask_sensitive(_clean(case["Resolution__c"]))
         if r:
             resolution_prefix.append(r)
 
@@ -270,9 +348,23 @@ def collect_resolution_steps(
         desc = _clean(task.get("Description") or "")
         if not desc or not _is_substantive(desc):
             continue
+
+        # Parse structured format (Issue Summary / Root Cause / Resolution sections)
+        parsed = _parse_structured_task(desc)
+
+        # Harvest issue / cause from the first task that provides them
+        if parsed["issue"] and not extracted_issue:
+            extracted_issue = _mask_sensitive(parsed["issue"])
+        if parsed["cause"] and not extracted_cause:
+            extracted_cause = _mask_sensitive(parsed["cause"])
+
+        # Use only the "Resolution" section as the step body when available;
+        # fall back to the full description otherwise (already stripped of dividers).
+        step_body = _mask_sensitive(parsed["resolution"] or desc)
+
         subject = _clean(task.get("Subject") or "")
         header = f"[Task: {subject}]" if subject else "[Task]"
-        steps.append(f"{header}\n{desc}")
+        steps.append(f"{header}\n{step_body}")
 
     # Fallback: case comments when no task steps found
     if not steps and not resolution_prefix:
@@ -288,7 +380,7 @@ def collect_resolution_steps(
     if not steps and resolution_text:
         steps = _split_steps(resolution_text)
 
-    return resolution_text, steps
+    return resolution_text, steps, extracted_issue, extracted_cause
 
 
 def collect_resolution_text(
@@ -297,7 +389,7 @@ def collect_resolution_text(
     comments: List[Dict[str, Any]],
 ) -> str:
     """Convenience wrapper returning just the full resolution text string."""
-    text, _ = collect_resolution_steps(case, tasks, comments)
+    text, _, _, _ = collect_resolution_steps(case, tasks, comments)
     return text
 
 
@@ -322,7 +414,10 @@ def build_template_article(
     subject = _clean(case.get("Subject"))
     issue = _clean(case.get("Issue__c")) or _clean(case.get("Case_description__c"))
     cause = _clean(case.get("Cause__c"))
-    resolution_text, steps = collect_resolution_steps(case, tasks, comments)
+    resolution_text, steps, extracted_issue, extracted_cause = collect_resolution_steps(case, tasks, comments)
+    # Fall back to task-extracted issue/cause when the case fields are empty
+    issue = issue or extracted_issue
+    cause = cause or extracted_cause
 
     summary = issue[:255] if issue else subject[:255]
 

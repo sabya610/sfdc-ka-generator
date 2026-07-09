@@ -40,6 +40,18 @@
     .del-btn { background:#c80000; color:#fff; border:0; border-radius:4px; padding:4px 8px;
                cursor:pointer; font-size:12px; margin-top:2px; flex-shrink:0; display:none; }
     .edit-active .del-btn { display:inline-block; }
+    /* Step header badge */
+    .step-header { display:block; font-size:11px; font-weight:700; color:#fff; background:#33475b;
+                   border-radius:4px; padding:2px 8px; margin-bottom:4px; }
+    /* Step content: view mode uses pre-like div, edit mode uses textarea */
+    .step-view { flex:1; background:#f8f9fa; border:1px solid transparent; border-radius:4px;
+                 padding:6px 8px; font-size:12px; font-family:"Consolas","Courier New",monospace;
+                 white-space:pre-wrap; word-break:break-word; min-height:56px; }
+    .step-view .code-line { display:block; background:rgba(0,0,0,0.06); border-radius:3px;
+                            padding:1px 4px; margin:1px 0; font-family:inherit; }
+    .step-row textarea.step-text { flex:1; min-height:56px; display:none; }
+    .edit-active .step-view { display:none; }
+    .edit-active .step-row textarea.step-text { display:block; }
   </style>
 </head>
 <body>
@@ -150,10 +162,30 @@
     function addStepRow(text, num) {
       const c = $('aSteps');
       if (!num) num = c.children.length + 1;
+
+      // Separate [Task: header] from body content
+      const headerMatch = (text || '').match(/^\[Task:\s*(.*?)\]\n?([\s\S]*)$/);
+      const taskLabel = headerMatch ? headerMatch[1].trim() : '';
+      const body      = headerMatch ? headerMatch[2].trim() : (text || '').trim();
+
+      // Build code-highlighted view of the body
+      function renderBody(rawText) {
+        const _CODE_LINE = /^(\s*(kubectl|helm|systemctl|journalctl|containerd|cat\s|sudo\s|echo\s|grep\s|curl\s|docker\s|podman\s|\/etc\/|\/var\/|\/usr\/|\/opt\/|\/sys\/|NO_PROXY|HTTPS?_PROXY)|.*<(IP_ADDR|HASH|UID)>)/i;
+        return rawText.split('\n').map(ln => {
+          const safe = ln.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+          return _CODE_LINE.test(ln) ? `<span class="code-line">${safe}</span>` : safe;
+        }).join('\n');
+      }
+
       const row = document.createElement('div');
       row.className = 'step-row';
-      row.innerHTML = `<span class="step-num">${num}.</span>` +
-        `<textarea class="step-text ka-field" rows="3" readonly>${text||''}</textarea>` +
+      row.innerHTML =
+        `<span class="step-num">${num}.</span>` +
+        `<div style="flex:1">` +
+          (taskLabel ? `<span class="step-header">Task: ${taskLabel}</span>` : '') +
+          `<div class="step-view">${renderBody(body)}</div>` +
+          `<textarea class="step-text ka-field" rows="5">${(text||'').replace(/</g,'&lt;')}</textarea>` +
+        `</div>` +
         `<button class="del-btn" onclick="this.closest('.step-row').remove();renumberSteps()">&#x2715;</button>`;
       c.appendChild(row);
     }
@@ -166,10 +198,10 @@
       editMode = on;
       $('editBtn').textContent = on ? '\u2714 Done editing' : '\u270f\uFE0F Edit';
       $('article').classList.toggle('edit-active', on);
-      [...document.querySelectorAll('.ka-field')].forEach(f => f.readOnly = !on);
+      // Toggle non-step ka-fields (title, url, summary, issue, cause)
+      [...document.querySelectorAll('.ka-field:not(.step-text)')].forEach(f => f.readOnly = !on);
       $('addStepBtn').style.display = on ? '' : 'none';
       if (!on) {
-        // auto-update URL name from title
         $('aUrl').value = slugify($('aTitle').value);
       }
     }

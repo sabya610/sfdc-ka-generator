@@ -47,8 +47,17 @@
     .step-view { flex:1; background:#f8f9fa; border:1px solid transparent; border-radius:4px;
                  padding:6px 8px; font-size:12px; font-family:"Consolas","Courier New",monospace;
                  white-space:pre-wrap; word-break:break-word; min-height:56px; }
-    .step-view .code-line { display:block; background:rgba(0,0,0,0.06); border-radius:3px;
-                            padding:1px 4px; margin:1px 0; font-family:inherit; }
+    .step-view .body-line, .step-view .code-line,
+    .step-view .log-line, .step-view .sub-step,
+    .step-view .bullet-line { display:block; }
+    .step-view .code-line { background:#e8f4f8; border-left:3px solid #0073e6; border-radius:0 3px 3px 0;
+                            padding:2px 6px; margin:2px 0; font-family:inherit; }
+    .step-view .log-line  { background:#fff8e1; border-left:3px solid #f0a500; border-radius:0 3px 3px 0;
+                            padding:2px 6px; margin:2px 0; font-size:11px; }
+    .step-view .sub-step  { margin:4px 0 4px 14px; }
+    .step-view .sub-num   { font-weight:700; color:#33475b; }
+    .step-view .bullet-line { margin:3px 0 3px 18px; }
+    .step-view .bullet-line::before { content:"\25B8  "; color:#0073e6; font-weight:700; }
     .step-row textarea.step-text { flex:1; min-height:56px; display:none; }
     .edit-active .step-view { display:none; }
     .edit-active .step-row textarea.step-text { display:block; }
@@ -85,7 +94,7 @@
         {% endfor %}
       </select>
 
-      <label style="margin-top:10px"><input type="checkbox" id="useLlm" style="width:auto" /> Use LLM drafting (needs OPENAI_API_KEY)</label>
+      <label style="margin-top:10px"><input type="checkbox" id="useLlm" style="width:auto" checked /> Use LLM drafting (offline llama3.1-8b via rag-app)</label>
 
       <label for="caseNum" style="margin-top:18px">Or generate directly by case #</label>
       <input id="caseNum" type="text" placeholder="5403042067" />
@@ -168,13 +177,23 @@
       const taskLabel = headerMatch ? headerMatch[1].trim() : '';
       const body      = headerMatch ? headerMatch[2].trim() : (text || '').trim();
 
-      // Build code-highlighted view of the body
+      // Build richly-formatted view: numbered sub-steps, bullets, command lines, log lines
       function renderBody(rawText) {
-        const _CODE_LINE = /^(\s*(kubectl|helm|systemctl|journalctl|containerd|cat\s|sudo\s|echo\s|grep\s|curl\s|docker\s|podman\s|\/etc\/|\/var\/|\/usr\/|\/opt\/|\/sys\/|NO_PROXY|HTTPS?_PROXY)|.*<(IP_ADDR|HASH|UID)>)/i;
+        const _CMD = /^(\s*(kubectl|helm|systemctl|journalctl|containerd|iptables|ip\s|scp\s|ssh\s|cat\s|sudo\s|echo\s|grep\s|curl\s|docker\s|podman\s|\/etc\/|\/var\/|\/usr\/|\/opt\/|\/sys\/|NO_PROXY|HTTPS?_PROXY|root@)|.*<(IP_ADDR|HASH|UID)>)/i;
+        const _LOG = /(^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d+\s+\d+:\d+:|E\d{4}\s+\d+:\d+:\d+\.\d+|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/;
+        const _NUM = /^(\s*)(\d{1,2})\.\s+(.+)/;
+        const _BUL = /^\s*[-*•]\s+(.*)/;
         return rawText.split('\n').map(ln => {
-          const safe = ln.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-          return _CODE_LINE.test(ln) ? `<span class="code-line">${safe}</span>` : safe;
-        }).join('\n');
+          const safe = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+          if (!ln.trim()) return '<span class="body-line">&nbsp;</span>';
+          if (_CMD.test(ln))  return `<span class="code-line">${safe(ln)}</span>`;
+          if (_LOG.test(ln))  return `<span class="log-line">${safe(ln)}</span>`;
+          const nm = _NUM.exec(ln);
+          if (nm) return `<span class="sub-step"><span class="sub-num">${nm[2]}.</span> ${safe(nm[3])}</span>`;
+          const bm = _BUL.exec(ln);
+          if (bm) return `<span class="bullet-line">${safe(bm[1])}</span>`;
+          return `<span class="body-line">${safe(ln)}</span>`;
+        }).join('');
       }
 
       const row = document.createElement('div');

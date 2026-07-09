@@ -442,6 +442,119 @@ def build_template_article(
     )
 
 
+# ---------------------------------------------------------------------------
+# Local LLM (rag-app llama.cpp endpoint) — structured KA prompt
+# ---------------------------------------------------------------------------
+
+_LLM_KA_PROMPT = """\
+You are an HPE Ezmeral support engineer writing a formal Knowledge Article.
+Convert the support case data below into a clean, customer-safe article.
+Remove all IP addresses, hostnames, customer names and email addresses — replace with generic terms.
+
+CASE SUBJECT: {subject}
+
+ISSUE (raw from case/task):
+{issue}
+
+ROOT CAUSE (raw from case/task):
+{cause}
+
+RESOLUTION STEPS (from closed task):
+{resolution}
+
+PRODUCT: {product}
+
+Write the article using EXACTLY these labeled sections (no extra commentary):
+
+TITLE: <concise one-line title>
+SUMMARY: <2-3 sentence summary of the problem and fix>
+ISSUE:
+<clear description of the symptom visible to the customer>
+CAUSE:
+<technical root cause explanation>
+RESOLUTION:
+1. <step one — use `command` notation for CLI>
+2. <step two>
+...
+
+<END>"""
+
+
+def _parse_llm_sections(text: str) -> Dict[str, str]:
+    """Extract TITLE/SUMMARY/ISSUE/CAUSE/RESOLUTION sections from LLM plain-text output."""
+    patterns = {
+        "title":      re.compile(r"TITLE:\s*(.+?)(?=\n(?:SUMMARY|ISSUE|CAUSE|RESOLUTION):|$)", re.S | re.I),
+        "summary":    re.compile(r"SUMMARY:\s*(.+?)(?=\n(?:TITLE|ISSUE|CAUSE|RESOLUTION):|$)", re.S | re.I),
+        "issue":      re.compile(r"ISSUE:\s*(.+?)(?=\n(?:TITLE|SUMMARY|CAUSE|RESOLUTION):|$)", re.S | re.I),
+        "cause":      re.compile(r"CAUSE:\s*(.+?)(?=\n(?:TITLE|SUMMARY|ISSUE|RESOLUTION):|$)", re.S | re.I),
+        "resolution": re.compile(r"RESOLUTION:\s*(.+?)(?=\n(?:TITLE|SUMMARY|ISSUE|CAUSE):|$)", re.S | re.I),
+    }
+    return {k: (m.group(1).strip() if (m := p.search(text)) else "") for k, p in patterns.items()}
+
+
+def build_rag_llm_article(
+    case: Dict[str, Any],
+    tasks: List[Dict[str, Any]],
+    comments: List[Dict[str, Any]],
+    product_key: str = DEFAULT_PRODUCT,
+    llm_endpoint: Optional[str] = None,
+) -> KnowledgeArticle:
+    """Call the rag-app /api/llm endpoint to draft the KA; falls back to template."""
+    import urllib.request, json as _json
+
+    endpoint = llm_endpoint or os.environ.get("LLM_ENDPOINT", "")
+    base = build_template_article(case, tasks, comments, product_key)
+    if not endpoint:
+        return base
+
+    prompt = _LLM_KA_PROMPT.format(
+        subject=base.source_case_subject or case.get("Subject", ""),
+        issue=base.issue or "(not captured)",
+        cause=base.cause or "(not captured)",
+        resolution=base.resolution or "(not captured)",
+        product=base.product_label,
+    )
+
+    try:
+        payload = _json.dumps({"prompt": prompt, "max_tokens": 1500}).encode()
+        req = urllib.request.Request(
+            endpoint,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            result = _json.loads(resp.read())
+        text = result.get("response", "")
+        if not text:
+            return base
+
+        secs = _parse_llm_sections(text)
+        if secs.get("title"):
+            base.title = secs["title"][:200]
+            base.url_name = slugify(base.title)
+        if secs.get("summary"):
+            base.summary = secs["summary"][:255]
+        if secs.get("issue"):
+            base.issue = secs["issue"]
+        if secs.get("cause"):
+            base.cause = secs["cause"]
+        if secs.get("resolution"):
+            # Split numbered steps into list
+            step_lines = [
+                re.sub(r"^\d+\.\s*", "", ln).strip()
+                for ln in secs["resolution"].splitlines()
+                if ln.strip() and re.match(r"^\d+\.", ln.strip())
+            ]
+            if step_lines:
+                base.steps = step_lines
+            base.resolution = secs["resolution"]
+        base.generator = "rag-llm:llama3.1-8b"
+    except Exception:  # never fail KA generation due to LLM error
+        return base
+    return base
+
+
 LLM_SYSTEM_PROMPT = (
     "You are an HPE Ezmeral support engineer writing a formal Knowledge Article. "
     "Given a support case and its resolution/task steps, produce a clear, "
@@ -508,7 +621,11 @@ def generate_article(
     product_key: str = DEFAULT_PRODUCT,
     use_llm: bool = True,
 ) -> KnowledgeArticle:
-    """Top-level entry point: choose LLM or template generation."""
-    if use_llm and os.environ.get("OPENAI_API_KEY"):
-        return build_llm_article(case, tasks, comments, product_key)
+    """Top-level entry point: prefer local rag-app LLM → OpenAI → template."""
+    if use_llm:
+        llm_endpoint = os.environ.get("LLM_ENDPOINT", "")
+        if llm_endpoint:
+            return build_rag_llm_article(case, tasks, comments, product_key, llm_endpoint)
+        if os.environ.get("OPENAI_API_KEY"):
+            return build_llm_article(case, tasks, comments, product_key)
     return build_template_article(case, tasks, comments, product_key)

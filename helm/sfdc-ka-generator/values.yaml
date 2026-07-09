@@ -4,7 +4,7 @@ replicaCount: 1
 
 image:
   repository: sabya610/sfdc-ka-generator
-  tag: "0.1.5"
+  tag: "0.1.7"
   pullPolicy: Always
 
 imagePullSecrets: []
@@ -61,6 +61,9 @@ proxy:
 config:
   SF_URL: "https://hp.my.salesforce.com"
   KA_BODY_FIELD: "Details__c"
+  # Internal cluster endpoint for offline LLM (rag-app llama.cpp).
+  # Format: http://<rag-release>-service.<namespace>.svc.cluster.local:<port>/api/llm
+  LLM_ENDPOINT: "http://rag-app-service.rag-app.svc.cluster.local:80/api/llm"
 
 # Secrets. Provide the Salesforce session id (and optional OpenAI key).
 # For production, prefer an existing secret via `existingSecret`.

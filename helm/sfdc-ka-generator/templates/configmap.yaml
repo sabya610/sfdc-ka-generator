@@ -7,4 +7,11 @@ metadata:
 data:
   {{- range $k, $v := .Values.config }}
   {{ $k }}: {{ $v | quote }}
+  {{- end }}  {{- if .Values.proxy.httpProxy }}
+  HTTP_PROXY: {{ .Values.proxy.httpProxy | quote }}
+  HTTPS_PROXY: {{ .Values.proxy.httpsProxy | quote }}
+  NO_PROXY: {{ .Values.proxy.noProxy | quote }}
+  http_proxy: {{ .Values.proxy.httpProxy | quote }}
+  https_proxy: {{ .Values.proxy.httpsProxy | quote }}
+  no_proxy: {{ .Values.proxy.noProxy | quote }}
   {{- end }}

@@ -1,0 +1,21 @@
+{{- if .Values.ezua.authorizationPolicy.providerName -}}
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: {{ include "sfdc-ka-generator.fullname" . }}-authpolicy
+  namespace: {{ .Values.ezua.authorizationPolicy.namespace }}
+  labels:
+    {{- include "sfdc-ka-generator.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- toYaml .Values.ezua.authorizationPolicy.matchLabels | nindent 6 }}
+  action: CUSTOM
+  provider:
+    name: {{ .Values.ezua.authorizationPolicy.providerName }}
+  rules:
+    - to:
+        - operation:
+            hosts:
+              - {{ .Values.ezua.virtualService.endpoint | quote }}
+{{- end }}

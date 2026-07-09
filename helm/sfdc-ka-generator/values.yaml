@@ -4,8 +4,8 @@ replicaCount: 1
 
 image:
   repository: sabya610/sfdc-ka-generator
-  tag: "0.1.0"
-  pullPolicy: IfNotPresent
+  tag: "0.1.4"
+  pullPolicy: Always
 
 imagePullSecrets: []
 nameOverride: ""
@@ -30,6 +30,19 @@ ingress:
           pathType: Prefix
   tls: []
 
+# Platform related options (EZUA BYOApp integration)
+ezua:
+  # VirtualService for EZUA application endpoint
+  virtualService:
+    endpoint: "sfdc-ka-generator.${DOMAIN_NAME}"
+    istioGateway: "istio-system/ezaf-gateway"
+  # SSO/Authorization via istio AuthorizationPolicy
+  authorizationPolicy:
+    namespace: "istio-system"
+    providerName: "oauth2-proxy"
+    matchLabels:
+      istio: "ingressgateway"
+
 resources:
   requests:
     cpu: 100m
@@ -37,6 +50,12 @@ resources:
   limits:
     cpu: 500m
     memory: 512Mi
+
+# HTTP proxy for outbound access (e.g. Salesforce API)
+proxy:
+  httpProxy: "http://hpeproxy.its.hpecorp.net:80"
+  httpsProxy: "http://hpeproxy.its.hpecorp.net:80"
+  noProxy: "10.0.0.0/8,192.168.0.0/16,localhost,127.0.0.1,.hpecorp.net,.storage.hpecorp.net,.cluster.local,.svc"
 
 # Application configuration (non-secret) -> rendered into a ConfigMap
 config:

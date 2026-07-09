@@ -1,0 +1,24 @@
+{{- if .Values.ezua.virtualService.endpoint -}}
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: {{ include "sfdc-ka-generator.fullname" . }}-vs
+  labels:
+    {{- include "sfdc-ka-generator.labels" . | nindent 4 }}
+    hpe-ezua/app: {{ include "sfdc-ka-generator.name" . }}
+    hpe-ezua/type: vendor-service
+spec:
+  gateways:
+    - {{ .Values.ezua.virtualService.istioGateway }}
+  hosts:
+    - {{ .Values.ezua.virtualService.endpoint | quote }}
+  http:
+    - match:
+        - uri:
+            prefix: /
+      route:
+        - destination:
+            host: {{ include "sfdc-ka-generator.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local
+            port:
+              number: {{ .Values.service.port }}
+{{- end }}

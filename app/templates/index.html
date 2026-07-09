@@ -26,11 +26,20 @@
     th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); }
     tr:hover td { background: #f0fdf9; cursor: pointer; }
     .muted { color: #777; font-size: 12px; }
-    pre { white-space: pre-wrap; background: #0d1117; color: #d1d5da; padding: 14px; border-radius: 6px; font-size: 12px; max-height: 420px; overflow: auto; }
     .pill { display: inline-block; background: #eef; border-radius: 10px; padding: 1px 8px; font-size: 11px; }
     .err { color: #b00020; font-size: 13px; }
-    .field { margin-bottom: 8px; }
-    .field b { display: block; font-size: 12px; color: #555; }
+    .ok  { color: #01a982; font-size: 13px; }
+    .field { margin-bottom: 10px; }
+    .field b { display: block; font-size: 12px; color: #555; margin-bottom: 3px; }
+    .ka-field { width:100%; padding:6px 8px; border:1px solid transparent; border-radius:4px;
+                font-size:13px; font-family:inherit; background:#f5f6f8; color:var(--ink); resize:vertical; }
+    .ka-field:not([readonly]) { background:#fff; border-color:#aaa; }
+    .step-row { display:flex; gap:6px; align-items:flex-start; margin:4px 0; }
+    .step-num { font-size:13px; font-weight:700; color:#555; padding-top:8px; min-width:20px; }
+    .step-row textarea { flex:1; min-height:56px; }
+    .del-btn { background:#c80000; color:#fff; border:0; border-radius:4px; padding:4px 8px;
+               cursor:pointer; font-size:12px; margin-top:2px; flex-shrink:0; display:none; }
+    .edit-active .del-btn { display:inline-block; }
   </style>
 </head>
 <body>
@@ -76,13 +85,37 @@
       <h2>2. Results</h2>
       <div id="caseList"><p class="muted">Enter a user email and click <b>Find cases</b>, or generate directly by case number.</p></div>
       <div id="article" style="display:none">
-        <h2 style="margin-top:18px">Knowledge Article draft <span class="pill" id="genBadge"></span></h2>
-        <div class="field"><b>Article Type / Product</b><span id="aType"></span></div>
-        <div class="field"><b>Title</b><span id="aTitle"></span></div>
-        <div class="field"><b>URL Name</b><span id="aUrl"></span></div>
-        <pre id="aBody"></pre>
-        <button id="copyBtn" class="secondary">Copy article text</button>
-        <button id="dlBtn" class="secondary">Download .txt</button>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:18px">
+          <h2 style="margin:0">Knowledge Article draft <span class="pill" id="genBadge"></span></h2>
+          <button id="editBtn" class="secondary" style="margin:0;padding:6px 14px;font-size:13px">✏&#xFE0F; Edit</button>
+        </div>
+        <div class="field" style="margin-top:12px"><b>Article Type / Product</b><span id="aType"></span></div>
+        <div class="field"><b>Title</b>
+          <input id="aTitle" class="ka-field" readonly style="font-size:14px;font-weight:600" />
+        </div>
+        <div class="field"><b>URL Name</b>
+          <input id="aUrl" class="ka-field" readonly style="font-size:12px;color:#555" />
+        </div>
+        <div class="field"><b>Summary</b>
+          <textarea id="aSummary" class="ka-field" rows="2" readonly></textarea>
+        </div>
+        <div class="field"><b>Issue</b>
+          <textarea id="aIssue" class="ka-field" rows="3" readonly></textarea>
+        </div>
+        <div class="field"><b>Cause</b>
+          <textarea id="aCause" class="ka-field" rows="2" readonly></textarea>
+        </div>
+        <div class="field"><b>Resolution Steps
+          <span class="muted" id="taskCount"></span></b>
+          <div id="aSteps"></div>
+          <button id="addStepBtn" class="secondary" style="display:none;margin-top:4px;padding:4px 12px;font-size:12px">+ Add step</button>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+          <button id="copyBtn" class="secondary">Copy article text</button>
+          <button id="dlBtn" class="secondary">Download .txt</button>
+          <button id="publishBtn" class="secondary">Publish to SFDC</button>
+        </div>
+        <p id="publishMsg"></p>
       </div>
     </section>
   </main>
@@ -90,6 +123,11 @@
   <script>
     const $ = (id) => document.getElementById(id);
     let currentArticle = null;
+    let editMode = false;
+
+    function slugify(s) {
+      return s.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/-+/g,'-').replace(/^-|-$/g,'').slice(0,80);
+    }
 
     function selectedGroups() {
       return [...document.querySelectorAll('#recordTypes input:checked')].map(c => c.value);
@@ -98,6 +136,83 @@
 
     async function post(url, body) {
       const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+      return data;
+    }
+
+    function renderSteps(steps) {
+      const c = $('aSteps');
+      c.innerHTML = '';
+      (steps || []).forEach((s, i) => addStepRow(s, i + 1));
+    }
+
+    function addStepRow(text, num) {
+      const c = $('aSteps');
+      if (!num) num = c.children.length + 1;
+      const row = document.createElement('div');
+      row.className = 'step-row';
+      row.innerHTML = `<span class="step-num">${num}.</span>` +
+        `<textarea class="step-text ka-field" rows="3" readonly>${text||''}</textarea>` +
+        `<button class="del-btn" onclick="this.closest('.step-row').remove();renumberSteps()">&#x2715;</button>`;
+      c.appendChild(row);
+    }
+
+    function renumberSteps() {
+      document.querySelectorAll('.step-num').forEach((n, i) => n.textContent = (i + 1) + '.');
+    }
+
+    function setEditMode(on) {
+      editMode = on;
+      $('editBtn').textContent = on ? '\u2714 Done editing' : '\u270f\uFE0F Edit';
+      $('article').classList.toggle('edit-active', on);
+      [...document.querySelectorAll('.ka-field')].forEach(f => f.readOnly = !on);
+      $('addStepBtn').style.display = on ? '' : 'none';
+      if (!on) {
+        // auto-update URL name from title
+        $('aUrl').value = slugify($('aTitle').value);
+      }
+    }
+
+    $('editBtn').onclick = () => setEditMode(!editMode);
+    $('addStepBtn').onclick = () => { addStepRow(''); renumberSteps(); $('aSteps').lastElementChild.querySelector('textarea').focus(); };
+
+    function buildArticleText() {
+      const steps = [...document.querySelectorAll('.step-text')].map(t => t.value.trim()).filter(Boolean);
+      const a = currentArticle;
+      return [
+        `Article Type: ${$('aType').textContent}`,
+        `Title: ${$('aTitle').value}`,
+        `URL Name: ${$('aUrl').value}`,
+        '',
+        `Product Group: ${a.product_group}`,
+        `Product Queue: ${a.product_queue}`,
+        `Product Line: ${a.product_line}`,
+        `Environment: ${(a.environment||[]).join(', ')}`,
+        '',
+        'Summary:', $('aSummary').value,
+        '',
+        'Issue:', $('aIssue').value,
+        '',
+        'Cause:', $('aCause').value,
+        '',
+        'Resolution Steps:',
+        ...steps.map((s, i) => `  ${i+1}. ${s}`),
+        '',
+        `Derived from case ${a.source_case_number}: ${a.source_case_subject}`,
+      ].join('\n');
+    }
+
+    function buildBodyHtml() {
+      const esc = s => (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br/>');
+      const steps = [...document.querySelectorAll('.step-text')].map(t => t.value.trim()).filter(Boolean);
+      let h = '';
+      if ($('aIssue').value) h += `<h2>Issue</h2><p>${esc($('aIssue').value)}</p>`;
+      if ($('aCause').value) h += `<h2>Cause</h2><p>${esc($('aCause').value)}</p>`;
+      if (steps.length) h += `<h2>Resolution Steps</h2><ol>${steps.map(s=>`<li>${esc(s)}</li>`).join('')}</ol>`;
+      h += `<hr/><p><em>Derived from case ${esc(currentArticle.source_case_number)}.</em></p>`;
+      return h;
+    }
       const data = await r.json();
       if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
       return data;
@@ -140,12 +255,18 @@
           use_llm: $('useLlm').checked,
         });
         currentArticle = data;
+        setEditMode(false);
         $('article').style.display = 'block';
         $('genBadge').textContent = data.generator;
-        $('aType').textContent = `${data.article_type} — ${data.product_label}`;
-        $('aTitle').textContent = data.title;
-        $('aUrl').textContent = data.url_name;
-        $('aBody').textContent = data.body_text;
+        $('aType').textContent = `${data.article_type} \u2014 ${data.product_label}`;
+        $('aTitle').value = data.title;
+        $('aUrl').value = data.url_name;
+        $('aSummary').value = data.summary || '';
+        $('aIssue').value = data.issue || '';
+        $('aCause').value = data.cause || '';
+        const cnt = data.task_count || 0;
+        $('taskCount').textContent = cnt ? `(${cnt} task${cnt>1?'s':''} used)` : '';
+        renderSteps(data.steps);
       } catch (e) { showError(e.message); }
       finally { $('genBtn').disabled = false; }
     }
@@ -156,13 +277,31 @@
       generate(n);
     };
 
-    $('copyBtn').onclick = () => navigator.clipboard.writeText(currentArticle.body_text);
+    $('copyBtn').onclick = () => navigator.clipboard.writeText(buildArticleText());
     $('dlBtn').onclick = () => {
-      const blob = new Blob([currentArticle.body_text], { type: 'text/plain' });
+      const blob = new Blob([buildArticleText()], { type: 'text/plain' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
       a.download = `KA_${currentArticle.source_case_number || 'draft'}.txt`;
       a.click();
+    };
+    $('publishBtn').onclick = async () => {
+      const msg = $('publishMsg');
+      msg.textContent = 'Publishing...';
+      msg.className = '';
+      try {
+        const r = await post('/api/publish', {
+          title: $('aTitle').value,
+          url_name: $('aUrl').value,
+          summary: $('aSummary').value,
+          body_html: buildBodyHtml(),
+        });
+        msg.textContent = `\u2705 Published to SFDC${r.result&&r.result.id ? ' (ID: '+r.result.id+')' : ''}`;
+        msg.className = 'ok';
+      } catch(e) {
+        msg.textContent = e.message;
+        msg.className = 'err';
+      }
     };
   </script>
 </body>

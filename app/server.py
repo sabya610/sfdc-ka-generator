@@ -41,6 +41,14 @@ from .sfdc_client import (
 
 app = Flask(__name__)
 
+
+@app.errorhandler(Exception)
+def handle_unhandled(exc: Exception):
+    """Return JSON for all unhandled exceptions so the browser never gets HTML."""
+    app.logger.exception("Unhandled exception: %s", exc)
+    return jsonify({"error": str(exc), "type": type(exc).__name__}), 500
+
+
 SF_URL = os.environ.get("SF_URL", "https://hp.my.salesforce.com")
 KA_BODY_FIELD = os.environ.get("KA_BODY_FIELD", "Details__c")
 

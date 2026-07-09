@@ -171,25 +171,117 @@ def _split_steps(text: str) -> List[str]:
     return [ln for ln in lines if ln]
 
 
-def collect_resolution_text(case: Dict[str, Any],
-                            tasks: List[Dict[str, Any]],
-                            comments: List[Dict[str, Any]]) -> str:
-    """Assemble the best available resolution / task-steps text for the case."""
-    chunks: List[str] = []
-    if case.get("Resolution__c"):
-        chunks.append(_clean(case["Resolution__c"]))
-    for task in tasks:
-        desc = _clean(task.get("Description"))
-        if desc:
-            subject = _clean(task.get("Subject"))
-            header = f"[Task: {subject}]" if subject else "[Task]"
-            chunks.append(f"{header}\n{desc}")
-    if not chunks:
+# Task types that are email correspondence — never useful for a KA.
+_EMAIL_SUBJECT_RE = re.compile(
+    r"^(?:email:|re:\s*hpe\s+support\s+case|fw:|fwd:)",
+    re.IGNORECASE,
+)
+# Match any "Standard Task" record type (covers CSC and Elevation variants).
+_STANDARD_TASK_RE = re.compile(r"standard\s+task", re.IGNORECASE)
+
+
+def _is_useful_task(task: Dict[str, Any]) -> bool:
+    """Return True only for completed Standard Tasks; skip all email tasks."""
+    # Must be Completed
+    status = (task.get("Status") or "").strip().lower()
+    if status and status != "completed":
+        return False
+    # Exclude email type
+    task_type = (task.get("Type") or "").strip().lower()
+    if task_type == "email":
+        return False
+    # Exclude email-like subjects
+    subject = (task.get("Subject") or "").strip()
+    if _EMAIL_SUBJECT_RE.match(subject):
+        return False
+    # RecordType: allow if absent OR if it's a "Standard Task" (CSC or Elevation)
+    record_type = ((task.get("RecordType") or {}).get("Name") or "").strip()
+    if record_type and not _STANDARD_TASK_RE.search(record_type):
+        return False
+    return True
+
+
+def _is_substantive(desc: str) -> bool:
+    """Return True if a task description contains meaningful troubleshooting content.
+
+    Rejects one-liner engagement logs like "I initially worked on this case..."
+    that add no value to a KA.  The threshold is intentionally generous so
+    genuine short steps are not dropped.
+    """
+    text = desc.strip()
+    if len(text) < 80:
+        return False
+    # Reject pure engagement / initial-contact phrasing
+    _ENGAGEMENT_RE = re.compile(
+        r"^(i\s+)?(initially\s+worked|contacted\s+customer|reached\s+out|"
+        r"requested\s+(the\s+)?(appropriate\s+)?details|awaiting\s+response|"
+        r"following\s+up|case\s+reassigned)",
+        re.IGNORECASE,
+    )
+    return not _ENGAGEMENT_RE.match(text)
+
+
+def collect_resolution_steps(
+    case: Dict[str, Any],
+    tasks: List[Dict[str, Any]],
+    comments: List[Dict[str, Any]],
+) -> tuple:
+    """Return ``(resolution_text, steps)`` with one step entry per task.
+
+    Key design principle: each completed Standard Task description becomes
+    exactly ONE step verbatim.  We do NOT call ``_split_steps`` on the
+    assembled text — doing so misinterprets numbered markers *inside* task
+    descriptions (e.g. "2 of 3 pods…") as step boundaries, corrupting output.
+
+    Strategy:
+    - Completed Standard Tasks (GSD CSC or Elevation) → one step each.
+    - Case Resolution__c → prepended text for closed cases only.
+    - Case Comments → last-resort fallback when no tasks found.
+    """
+    useful = [t for t in tasks if _is_useful_task(t)]
+    steps: List[str] = []
+    resolution_prefix: List[str] = []
+
+    # Resolution__c is only reliable for closed cases.
+    case_status = (case.get("Status") or "").strip().lower()
+    if case_status == "closed" and case.get("Resolution__c"):
+        r = _clean(case["Resolution__c"])
+        if r:
+            resolution_prefix.append(r)
+
+    for task in useful:
+        desc = _clean(task.get("Description") or "")
+        if not desc or not _is_substantive(desc):
+            continue
+        subject = _clean(task.get("Subject") or "")
+        header = f"[Task: {subject}]" if subject else "[Task]"
+        steps.append(f"{header}\n{desc}")
+
+    # Fallback: case comments when no task steps found
+    if not steps and not resolution_prefix:
         for comment in comments:
-            body = _clean(comment.get("CommentBody"))
+            body = _clean(comment.get("CommentBody") or "")
             if body:
-                chunks.append(body)
-    return "\n\n".join(c for c in chunks if c).strip()
+                steps.append(body)
+
+    all_chunks = resolution_prefix + steps
+    resolution_text = "\n\n".join(c for c in all_chunks if c).strip()
+
+    # If no task steps but we have resolution text, split it the old way
+    if not steps and resolution_text:
+        steps = _split_steps(resolution_text)
+
+    return resolution_text, steps
+
+
+def collect_resolution_text(
+    case: Dict[str, Any],
+    tasks: List[Dict[str, Any]],
+    comments: List[Dict[str, Any]],
+) -> str:
+    """Convenience wrapper returning just the full resolution text string."""
+    text, _ = collect_resolution_steps(case, tasks, comments)
+    return text
 
 
 # ---------------------------------------------------------------------------
@@ -213,8 +305,7 @@ def build_template_article(
     subject = _clean(case.get("Subject"))
     issue = _clean(case.get("Issue__c")) or _clean(case.get("Case_description__c"))
     cause = _clean(case.get("Cause__c"))
-    resolution_text = collect_resolution_text(case, tasks, comments)
-    steps = _split_steps(resolution_text)
+    resolution_text, steps = collect_resolution_steps(case, tasks, comments)
 
     summary = issue[:255] if issue else subject[:255]
 

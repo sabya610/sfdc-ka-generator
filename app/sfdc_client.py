@@ -51,7 +51,8 @@ CASE_FIELDS = (
 
 TASK_FIELDS = (
     "Id, WhatId, Subject, Description, Status, Type, Category__c, "
-    "Log_Action_Type__c, Owner.Name, Owner.Email, CreatedDate, CompletedDateTime"
+    "Log_Action_Type__c, Owner.Name, Owner.Email, CreatedDate, CompletedDateTime, "
+    "RecordType.Name"
 )
 
 
@@ -121,7 +122,8 @@ class Salesforce:
         headers = self.headers.copy()
         headers.update(kwargs.pop("headers", {}) or {})
         result = self.session.request(
-            method, url, headers=headers, timeout=self.timeout, **kwargs
+            method, url, headers=headers, timeout=self.timeout,
+            allow_redirects=False, **kwargs
         )
         if result.status_code >= 300:
             try:

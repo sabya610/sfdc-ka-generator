@@ -213,10 +213,6 @@
       h += `<hr/><p><em>Derived from case ${esc(currentArticle.source_case_number)}.</em></p>`;
       return h;
     }
-      const data = await r.json();
-      if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
-      return data;
-    }
 
     $('findBtn').onclick = async () => {
       showError(''); $('findBtn').disabled = true;

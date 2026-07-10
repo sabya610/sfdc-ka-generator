@@ -153,6 +153,60 @@ def api_generate():
     return jsonify(result)
 
 
+@app.post("/api/debug")
+def api_debug():
+    """Diagnostic: dump raw tasks + per-filter decisions for a case number."""
+    from .ka_generator import (
+        _clean,
+        _is_useful_task,
+        _is_substantive,
+        _parse_structured_task,
+    )
+
+    data = request.get_json(silent=True) or {}
+    case_number = (data.get("case_number") or "").strip()
+    if not case_number:
+        return jsonify({"error": "case_number is required"}), 400
+
+    sf = _client()
+    bundle = _load_case_bundle(sf, case_number)
+    case = bundle["case"]
+    tasks = bundle["tasks"]
+
+    owner_email = (
+        (case.get("Case_Owner_eMail__c") or "")
+        or ((case.get("Owner") or {}).get("Email") or "")
+    ).strip().lower()
+
+    task_report = []
+    for t in tasks:
+        raw_desc = t.get("Description") or ""
+        cleaned = _clean(raw_desc)
+        parsed = _parse_structured_task(cleaned)
+        task_report.append({
+            "subject": t.get("Subject"),
+            "status": t.get("Status"),
+            "type": t.get("Type"),
+            "record_type": (t.get("RecordType") or {}).get("Name"),
+            "owner_email": (t.get("Owner") or {}).get("Email"),
+            "raw_desc_len": len(raw_desc),
+            "raw_desc_head": raw_desc[:300],
+            "cleaned_head": cleaned[:300],
+            "is_useful": _is_useful_task(t),
+            "is_substantive": _is_substantive(cleaned),
+            "parsed_issue": parsed["issue"][:100],
+            "parsed_cause": parsed["cause"][:100],
+            "parsed_resolution": parsed["resolution"][:100],
+        })
+
+    return jsonify({
+        "case_owner_email": owner_email,
+        "case_status": case.get("Status"),
+        "task_count": len(tasks),
+        "tasks": task_report,
+    })
+
+
 @app.post("/api/publish")
 def api_publish():
     """Best-effort creation of a draft Knowledge__kav record."""

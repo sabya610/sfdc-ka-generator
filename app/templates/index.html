@@ -136,6 +136,7 @@
           <button id="dlBtn" class="secondary">Download .txt</button>
           <button id="publishBtn" class="secondary">Publish to SFDC</button>
         </div>
+        <label style="margin-top:8px;font-weight:400;font-size:13px"><input type="checkbox" id="submitReview" style="width:auto" checked /> Submit for technical review after publishing</label>
         <p id="publishMsg"></p>
       </div>
     </section>
@@ -355,10 +356,18 @@
           title: $('aTitle').value,
           url_name: $('aUrl').value,
           summary: $('aSummary').value,
+          owner_email: $('email').value.trim(),
+          submit_for_review: $('submitReview').checked,
           ...buildSectionHtml(),
         });
-        msg.textContent = `\u2705 Published to SFDC${r.result&&r.result.id ? ' (ID: '+r.result.id+')' : ''}`;
+        let txt = '\u2705 Published to SFDC';
+        if (r.article_number) txt += ` — Article ${r.article_number}`;
+        if (r.result && r.result.validation_status) txt += ` [${r.result.validation_status}]`;
+        msg.innerHTML = txt + (r.article_url ? ` — <a href="${r.article_url}" target="_blank">Open in SFDC</a>` : '');
         msg.className = 'ok';
+        if (r.owner_warning) {
+          msg.innerHTML += `<br/><span class="err">\u26A0 ${r.owner_warning}</span>`;
+        }
       } catch(e) {
         msg.textContent = e.message;
         msg.className = 'err';

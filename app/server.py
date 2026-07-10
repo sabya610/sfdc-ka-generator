@@ -229,9 +229,25 @@ def api_publish():
         KA_ENVIRONMENT_FIELD: data.get("environment_html") or "",
         KA_PRODUCT_FIELD: data.get("product_html") or "",
     }
+    # When submit_for_review is set, move the draft into the review queue so it
+    # appears in "Article Awaiting Review" and can be approved/published.
+    if data.get("submit_for_review"):
+        fields["ValidationStatus"] = os.environ.get(
+            "KA_REVIEW_STATUS", "Awaiting Technical Review"
+        )
 
     try:
         sf = _client()
+        # Assign ownership to a real user (by email) instead of the integration user.
+        owner_email = (data.get("owner_email") or os.environ.get("KA_DEFAULT_OWNER_EMAIL") or "").strip()
+        owner_warning = None
+        if owner_email:
+            owner_id = sf.get_user_id_by_email(owner_email)
+            if owner_id:
+                fields["OwnerId"] = owner_id
+            else:
+                owner_warning = f"No active SFDC user found for '{owner_email}'; owner left as integration user."
+
         result = sf.create_knowledge_draft(
             title=data["title"],
             url_name=data["url_name"],
@@ -241,8 +257,31 @@ def api_publish():
     except SalesforceError as exc:
         return jsonify({"error": str(exc), "status": exc.status}), 502
 
+    # Enrich the response so the user can locate the draft in SFDC.
+    kav_id = (result or {}).get("id")
+    article_number = None
+    if kav_id:
+        try:
+            q = sf.query(
+                "SELECT ArticleNumber, ValidationStatus, PublishStatus "
+                f"FROM Knowledge__kav WHERE Id = '{kav_id}'"
+            )
+            recs = q.get("records") or []
+            if recs:
+                article_number = recs[0].get("ArticleNumber")
+                result["validation_status"] = recs[0].get("ValidationStatus")
+                result["publish_status"] = recs[0].get("PublishStatus")
+        except SalesforceError:
+            pass
 
-    return jsonify({"created": True, "result": result})
+    article_url = f"{SF_URL}/lightning/r/Knowledge__kav/{kav_id}/view" if kav_id else None
+    return jsonify({
+        "created": True,
+        "result": result,
+        "article_number": article_number,
+        "article_url": article_url,
+        "owner_warning": owner_warning,
+    })
 
 
 def main() -> None:

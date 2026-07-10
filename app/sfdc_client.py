@@ -214,6 +214,19 @@ class Salesforce:
         )
         return self.query_all(soql)
 
+    def get_user_id_by_email(self, email: str) -> Optional[str]:
+        """Return the Id of an active User matching ``email`` (Username or Email)."""
+        safe = email.replace("'", "").strip()
+        if not safe:
+            return None
+        soql = (
+            "SELECT Id FROM User "
+            f"WHERE IsActive = true AND (Username = '{safe}' OR Email = '{safe}') "
+            "ORDER BY LastLoginDate DESC NULLS LAST LIMIT 1"
+        )
+        records = self.query_all(soql)
+        return records[0]["Id"] if records else None
+
     def create_knowledge_draft(
         self,
         title: str,

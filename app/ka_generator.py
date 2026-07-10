@@ -150,10 +150,22 @@ def slugify(text: str, max_len: int = 80) -> str:
 def _clean(text: Optional[str]) -> str:
     if not text:
         return ""
-    # Strip simple HTML tags that may appear in rich-text fields.
-    text = re.sub(r"<[^>]+>", " ", text)
+    # Block-level HTML elements must become newlines so that structured
+    # sections (separated by lines of ====) survive the cleaning step.
+    text = re.sub(
+        r"<br\s*/?>|</?(?:p|div|li|tr|td|th|h[1-6]|blockquote|pre)\b[^>]*>",
+        "\n",
+        text,
+        flags=re.IGNORECASE,
+    )
+    # Strip remaining inline tags without adding spaces (avoids gluing words)
+    text = re.sub(r"<[^>]+>", "", text)
     text = html.unescape(text)
-    return re.sub(r"[ \t]+", " ", text).strip()
+    text = re.sub(r"\r\n|\r", "\n", text)
+    text = re.sub(r"[ \t]+", " ", text)         # collapse horizontal whitespace
+    text = re.sub(r"\n[ \t]+", "\n", text)      # strip leading spaces from lines
+    text = re.sub(r"\n{3,}", "\n\n", text)      # collapse excessive blank lines
+    return text.strip()
 
 
 def _split_steps(text: str) -> List[str]:

@@ -219,17 +219,19 @@ class Salesforce:
         title: str,
         url_name: str,
         summary: str,
-        body_field: str,
-        body_html: str,
-        extra_fields: Optional[Dict[str, Any]] = None,
+        fields: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Create a draft Knowledge__kav record. Best-effort; field API names vary."""
+        """Create a draft Knowledge__kav record.
+
+        ``fields`` maps Salesforce field API names to values (e.g. the GSD
+        Issue/Cause/Resolution rich-text fields). Empty values are skipped.
+        """
         payload: Dict[str, Any] = {
             "Title": title,
             "UrlName": url_name,
             "Summary": summary,
-            body_field: body_html,
         }
-        if extra_fields:
-            payload.update(extra_fields)
+        for name, value in (fields or {}).items():
+            if value:
+                payload[name] = value
         return self.create_sobject("Knowledge__kav", payload)

@@ -16,7 +16,7 @@ SF_URL          Salesforce instance URL (default https://hp.my.salesforce.com)
 SF_SID          Salesforce session id, or a path to a file containing it
 SF_SID_FILE     Path to a file containing the session id
 OPENAI_API_KEY  Optional; enables LLM-assisted drafting
-KA_BODY_FIELD   API name of the KA rich-text body field (default: Details__c)
+KA_*_FIELD      Override GSD Issue/Solution Knowledge__kav field API names
 PORT            Listen port (default 8080)
 """
 
@@ -50,7 +50,12 @@ def handle_unhandled(exc: Exception):
 
 
 SF_URL = os.environ.get("SF_URL", "https://hp.my.salesforce.com")
-KA_BODY_FIELD = os.environ.get("KA_BODY_FIELD", "Details__c")
+# GSD KM Issue/Solution Knowledge__kav field API names (override via env if needed).
+KA_ISSUE_FIELD = os.environ.get("KA_ISSUE_FIELD", "GSD_KM_Issue_Solution_Issue__c")
+KA_CAUSE_FIELD = os.environ.get("KA_CAUSE_FIELD", "GSD_KM_Issue_Solution_Cause__c")
+KA_RESOLUTION_FIELD = os.environ.get("KA_RESOLUTION_FIELD", "GSD_KM_Issue_Solution_Resolution__c")
+KA_ENVIRONMENT_FIELD = os.environ.get("KA_ENVIRONMENT_FIELD", "GSD_KM_Issue_Solution_Environment__c")
+KA_PRODUCT_FIELD = os.environ.get("KA_PRODUCT_FIELD", "GSD_KM_Issue_Solution_Product__c")
 
 
 def _client() -> Salesforce:
@@ -209,12 +214,21 @@ def api_debug():
 
 @app.post("/api/publish")
 def api_publish():
-    """Best-effort creation of a draft Knowledge__kav record."""
+    """Create a draft Knowledge__kav record using GSD Issue/Solution fields."""
     data = request.get_json(silent=True) or {}
-    required = ("title", "url_name", "summary", "body_html")
+    required = ("title", "url_name", "summary")
     missing = [f for f in required if not data.get(f)]
     if missing:
         return jsonify({"error": f"missing fields: {', '.join(missing)}"}), 400
+
+    # Map the article sections to the org's GSD Issue/Solution rich-text fields.
+    fields = {
+        KA_ISSUE_FIELD: data.get("issue_html") or "",
+        KA_CAUSE_FIELD: data.get("cause_html") or "",
+        KA_RESOLUTION_FIELD: data.get("resolution_html") or "",
+        KA_ENVIRONMENT_FIELD: data.get("environment_html") or "",
+        KA_PRODUCT_FIELD: data.get("product_html") or "",
+    }
 
     try:
         sf = _client()
@@ -222,11 +236,11 @@ def api_publish():
             title=data["title"],
             url_name=data["url_name"],
             summary=data["summary"],
-            body_field=data.get("body_field") or KA_BODY_FIELD,
-            body_html=data["body_html"],
+            fields=fields,
         )
     except SalesforceError as exc:
         return jsonify({"error": str(exc), "status": exc.status}), 502
+
 
     return jsonify({"created": True, "result": result})
 

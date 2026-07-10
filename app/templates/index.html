@@ -265,6 +265,20 @@
       return h;
     }
 
+    // Build the per-section HTML sent to the GSD Issue/Solution KA fields.
+    function buildSectionHtml() {
+      const esc = s => (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br/>');
+      const steps = [...document.querySelectorAll('.step-text')].map(t => t.value.trim()).filter(Boolean);
+      const a = currentArticle || {};
+      return {
+        issue_html: $('aIssue').value ? `<p>${esc($('aIssue').value)}</p>` : '',
+        cause_html: $('aCause').value ? `<p>${esc($('aCause').value)}</p>` : '',
+        resolution_html: steps.length ? `<ol>${steps.map(s=>`<li>${esc(s)}</li>`).join('')}</ol>` : '',
+        environment_html: (a.environment||[]).length ? `<p>${esc((a.environment||[]).join(', '))}</p>` : '',
+        product_html: a.product_label ? `<p>${esc(a.product_label)}</p>` : '',
+      };
+    }
+
     $('findBtn').onclick = async () => {
       showError(''); $('findBtn').disabled = true;
       try {
@@ -341,7 +355,7 @@
           title: $('aTitle').value,
           url_name: $('aUrl').value,
           summary: $('aSummary').value,
-          body_html: buildBodyHtml(),
+          ...buildSectionHtml(),
         });
         msg.textContent = `\u2705 Published to SFDC${r.result&&r.result.id ? ' (ID: '+r.result.id+')' : ''}`;
         msg.className = 'ok';

@@ -56,6 +56,26 @@ KA_CAUSE_FIELD = os.environ.get("KA_CAUSE_FIELD", "GSD_KM_Issue_Solution_Cause__
 KA_RESOLUTION_FIELD = os.environ.get("KA_RESOLUTION_FIELD", "GSD_KM_Issue_Solution_Resolution__c")
 KA_ENVIRONMENT_FIELD = os.environ.get("KA_ENVIRONMENT_FIELD", "GSD_KM_Issue_Solution_Environment__c")
 KA_PRODUCT_FIELD = os.environ.get("KA_PRODUCT_FIELD", "GSD_KM_Issue_Solution_Product__c")
+KA_PRODUCT_GROUP_FIELD = os.environ.get("KA_PRODUCT_GROUP_FIELD", "GSD_KM_Issue_Solution_Product_Group__c")
+KA_PRODUCT_QUEUE_FIELD = os.environ.get("KA_PRODUCT_QUEUE_FIELD", "GSD_KM_Issue_Solution_Product_Queue__c")
+KA_PRODUCT_LINE_FIELD = os.environ.get("KA_PRODUCT_LINE_FIELD", "Product_Line__c")
+KA_DISCLOSURE_FIELD = os.environ.get("KA_DISCLOSURE_FIELD", "GSD_KM_Issue_Solution_Disclosure_Level__c")
+KA_IC_CHECK_FIELD = os.environ.get("KA_IC_CHECK_FIELD", "IC_Check_Required__c")
+KA_INTERNAL_NOTES_FIELD = os.environ.get("KA_INTERNAL_NOTES_FIELD", "GSD_KM_Issue_Solution_Internal_Notes__c")
+KA_DEFAULT_DISCLOSURE = os.environ.get("KA_DEFAULT_DISCLOSURE", "Public")
+KA_DEFAULT_IC_CHECK = os.environ.get("KA_DEFAULT_IC_CHECK", "False")
+
+# Article Type -> Knowledge__kav RecordType Id (override the whole map via env JSON if needed).
+import json as _json
+_DEFAULT_RECORD_TYPES = {
+    "Troubleshooting": "0121V0000010n5oQAA",
+    "How Tos": "0121V000001NMhvQAG",
+    "Informational": "0121V000001NMi0QAG",
+}
+try:
+    KA_RECORD_TYPES = _json.loads(os.environ.get("KA_RECORD_TYPES_JSON", "")) or _DEFAULT_RECORD_TYPES
+except Exception:
+    KA_RECORD_TYPES = _DEFAULT_RECORD_TYPES
 
 
 def _client() -> Salesforce:
@@ -175,6 +195,26 @@ def api_publish():
         KA_ENVIRONMENT_FIELD: data.get("environment_html") or "",
         KA_PRODUCT_FIELD: data.get("product_html") or "",
     }
+
+    # Metadata / tagging picklists (Product Group/Queue/Line, Disclosure, IC check).
+    if data.get("product_group"):
+        fields[KA_PRODUCT_GROUP_FIELD] = data["product_group"]
+    if data.get("product_queue"):
+        fields[KA_PRODUCT_QUEUE_FIELD] = data["product_queue"]
+    if data.get("product_line"):
+        fields[KA_PRODUCT_LINE_FIELD] = data["product_line"]
+    fields[KA_DISCLOSURE_FIELD] = data.get("disclosure_level") or KA_DEFAULT_DISCLOSURE
+    fields[KA_IC_CHECK_FIELD] = data.get("ic_check_required") or KA_DEFAULT_IC_CHECK
+    # Internal Notes := originating case number.
+    if data.get("internal_notes"):
+        fields[KA_INTERNAL_NOTES_FIELD] = data["internal_notes"]
+
+    # Article Type -> RecordTypeId (Troubleshooting / How Tos / Informational).
+    article_type = data.get("article_type") or "Troubleshooting"
+    rt_id = KA_RECORD_TYPES.get(article_type)
+    if rt_id:
+        fields["RecordTypeId"] = rt_id
+
     # When submit_for_review is set, move the draft into the review queue so it
     # appears in "Article Awaiting Review" and can be approved/published.
     if data.get("submit_for_review"):

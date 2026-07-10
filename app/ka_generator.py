@@ -43,7 +43,7 @@ PRODUCT_CATALOG: Dict[str, Dict[str, Any]] = {
         "label": "HPE Ezmeral Data Fabric",
         "product_group": "Enterprise Solutions",
         "product_queue": "HPE Ezmeral",
-        "product_line": "DATA FABRIC SW (RM)",
+        "product_line": "DATA FABRIC SW (PU)",
         "environments": ["Data Fabric 7.x"],
     },
 }

@@ -4,7 +4,7 @@ replicaCount: 1
 
 image:
   repository: sabya610/sfdc-ka-generator
-  tag: "0.1.14"
+  tag: "0.1.15"
   pullPolicy: Always
 
 imagePullSecrets: []

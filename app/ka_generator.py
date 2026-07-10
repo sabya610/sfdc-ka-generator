@@ -323,26 +323,15 @@ def collect_resolution_steps(
 
     Strategy:
     - Completed Standard Tasks (GSD CSC or Elevation) → one step each.
-    - Tasks are filtered to those owned by the case owner (Case_Owner_eMail__c);
-      tasks from other engineers (e.g. monitoring follow-ups) are excluded.
-      If no owner-matching tasks are found, all useful tasks are used as fallback.
+    - A task is included ONLY if it has an explicit structured "Resolution"
+      section — this reliably selects the KA-worthy task (the one that
+      documents the actual fix) regardless of which engineer owns it.
+      Raw debugging-note tasks and monitoring follow-ups are naturally
+      excluded because they lack a Resolution section.
     - Case Resolution__c → prepended text for closed cases only.
     - Case Comments → last-resort fallback when no tasks found.
     """
     useful = [t for t in tasks if _is_useful_task(t)]
-
-    # Filter to tasks owned by the case owner to exclude steps from other engineers.
-    owner_email = (
-        (case.get("Case_Owner_eMail__c") or "")
-        or ((case.get("Owner") or {}).get("Email") or "")
-    ).strip().lower()
-    if owner_email:
-        by_owner = [
-            t for t in useful
-            if ((t.get("Owner") or {}).get("Email") or "").strip().lower() == owner_email
-        ]
-        if by_owner:  # only restrict if we actually found matching tasks
-            useful = by_owner
 
     steps: List[str] = []
     resolution_prefix: List[str] = []

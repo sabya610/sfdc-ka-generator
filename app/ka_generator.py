@@ -30,14 +30,22 @@ from typing import Any, Dict, List, Optional
 
 # ---------------------------------------------------------------------------
 # Product catalog -> KA tagging (derived from HPE Ezmeral KA examples)
+#
+# product_tags: list of HPE product series numbers to set on KMProductAttribute.
+#   PCAI / AIE / EZUA  →  R4T71AAE  (HPE Ezmeral Machine Learning Ops Software)
+#   Data Fabric        →  R9E30AAE  (HPE Ezmeral Data Fabric Software – Customer Managed)
+#                         plus the full series list attached automatically when
+#                         tag_all_datafabric_series=True is passed to publish.
 # ---------------------------------------------------------------------------
 PRODUCT_CATALOG: Dict[str, Dict[str, Any]] = {
     "container-platform": {
-        "label": "HPE Ezmeral Container Platform / Unified Analytics",
+        "label": "HPE Ezmeral Container Platform / Unified Analytics (PCAI / AIE / EZUA)",
         "product_group": "Enterprise Solutions",
         "product_queue": "HPE Ezmeral",
         "product_line": "CONT PLT SW (RM)",
         "environments": ["AIE 1.x", "PCAI 1.x", "EZUA 1.x"],
+        # Single product series tag for PCAI / AIE / EZUA KAs
+        "product_tags": ["R4T71AAE"],
     },
     "datafabric": {
         "label": "HPE Ezmeral Data Fabric",
@@ -45,6 +53,10 @@ PRODUCT_CATALOG: Dict[str, Dict[str, Any]] = {
         "product_queue": "HPE Ezmeral",
         "product_line": "DATA FABRIC SW (PU)",
         "environments": ["Data Fabric 7.x"],
+        # Primary Data Fabric series; additional series are resolved automatically
+        # at publish time by querying all active Product2 records whose
+        # ProductCode starts with the known DF series prefixes.
+        "product_tags": ["R9E30AAE"],
     },
 }
 
@@ -209,18 +221,33 @@ def _mask_sensitive(text: str) -> str:
 # ---------------------------------------------------------------------------
 # Structured task description parser
 # ---------------------------------------------------------------------------
-# Many HPE task descriptions use a section format separated by ===... dividers:
-#   Issue Summary / Root Cause Analysis / Resolution
+# HPE task descriptions come in two shapes:
+#   1. Divider style : "Issue Summary" / "Root Cause Analysis" / "Resolution"
+#                      sections separated by lines of ==== or ---- dividers.
+#   2. Colon style   : "Issue:" / "Root cause:" / "Resolution:" inline headers
+#                      (optionally with text on the same line), no dividers.
+# The parser below supports both.
 _DIVIDER_RE = re.compile(r"^[=\-]{5,}\s*$")
+# Section headers we capture. Each allows an optional trailing ": inline text".
 _SECTION_MAP: Dict[str, re.Pattern] = {
-    "issue": re.compile(r"^issue(\s+summary)?\s*$", re.IGNORECASE),
+    "issue": re.compile(r"^\s*issue(?:\s+summary)?\s*(?::\s*(.*))?$", re.IGNORECASE),
     "cause": re.compile(
-        r"^(root\s+cause(\s+analysis)?|rca|cause)\s*$", re.IGNORECASE
+        r"^\s*(?:root\s+cause(?:\s+analysis)?|rca|cause)\s*(?::\s*(.*))?$",
+        re.IGNORECASE,
     ),
     "resolution": re.compile(
-        r"^(resolution(\s+steps?)?|fix|solution)\s*$", re.IGNORECASE
+        r"^\s*(?:resolution(?:\s+steps?)?|solution(?:\s+steps?)?|fix)\s*(?::\s*(.*))?$",
+        re.IGNORECASE,
     ),
 }
+# Headers that terminate the current section but are NOT captured (debug notes,
+# prose summaries, caveats). Prevents these from polluting Issue/Cause/Resolution.
+_IGNORE_HEADER = re.compile(
+    r"^\s*(?:troubleshooting\s+steps?(?:\s+performed)?|steps?\s+performed"
+    r"|how\s+we\s+fixed\s+it|analysis|investigation|notes?"
+    r"|environment|observations?|next\s+action(?:\s+plan)?)\s*(?::\s*.*)?$",
+    re.IGNORECASE,
+)
 
 
 def _parse_structured_task(description: str) -> Dict[str, str]:
@@ -242,15 +269,26 @@ def _parse_structured_task(description: str) -> Dict[str, str]:
 
     for line in description.splitlines():
         stripped = line.strip()
+        # Divider lines reset the section (divider-style format).
         if _DIVIDER_RE.match(stripped):
             _flush()
             current_section = None
             continue
+        # Non-captured headers (debug notes / summaries) end the current section.
+        if _IGNORE_HEADER.match(stripped):
+            _flush()
+            current_section = None
+            continue
+        # Captured section headers (Issue / Cause / Resolution).
         matched = False
         for sec_key, pattern in _SECTION_MAP.items():
-            if pattern.match(stripped):
+            m = pattern.match(stripped)
+            if m:
                 _flush()
                 current_section = sec_key
+                inline = (m.group(1) or "").strip()
+                if inline:
+                    buf.append(inline)
                 matched = True
                 break
         if not matched:

@@ -248,3 +248,84 @@ class Salesforce:
             if value:
                 payload[name] = value
         return self.create_sobject("Knowledge__kav", payload)
+
+    def get_product_ids_by_codes(self, product_codes: List[str]) -> Dict[str, str]:
+        """Return {ProductCode: Id} for active Product2 records matching the given codes.
+
+        Used to resolve product series numbers (e.g. R4T71AAE, R9E30AAE) to
+        their Salesforce Product2 Ids before creating KMProductAttribute records.
+        """
+        if not product_codes:
+            return {}
+        safe_codes = [c.replace("'", "") for c in product_codes]
+        codes_in = "', '".join(safe_codes)
+        soql = (
+            f"SELECT Id, ProductCode FROM Product2 "
+            f"WHERE ProductCode IN ('{codes_in}') AND IsActive = true"
+        )
+        records = self.query_all(soql)
+        return {r["ProductCode"]: r["Id"] for r in records}
+
+    def get_knowledge_article_id(self, kav_id: str) -> Optional[str]:
+        """Resolve the master KnowledgeArticle.Id from a Knowledge__kav version Id.
+
+        KMProductAttribute requires the master ``KnowledgeArticleId``, not the
+        version record Id returned by ``create_sobject('Knowledge__kav', ...)``.
+        """
+        safe = kav_id.replace("'", "")
+        soql = f"SELECT KnowledgeArticleId FROM Knowledge__kav WHERE Id = '{safe}'"
+        records = self.query_all(soql)
+        return records[0]["KnowledgeArticleId"] if records else None
+
+    def tag_article_products(
+        self,
+        kav_id: str,
+        product_codes: List[str],
+    ) -> Dict[str, Any]:
+        """Create KMProductAttribute records that link a Knowledge Article to
+        one or more product series.
+
+        Convention (from screenshots):
+          PCAI / AIE / EZUA  →  product_codes = ["R4T71AAE"]
+          Data Fabric        →  product_codes = ["R9E30AAE"]  (plus any extras)
+
+        Args:
+            kav_id:        Id of the Knowledge__kav draft (returned by create_knowledge_draft).
+            product_codes: List of HPE product series numbers, e.g. ["R4T71AAE"].
+
+        Returns:
+            Dict with keys "tagged" (list of ProductCode), "skipped" (not found in Product2),
+            "errors" (list of error strings).
+        """
+        tagged: List[str] = []
+        skipped: List[str] = []
+        errors: List[str] = []
+
+        # 1. Resolve the master KnowledgeArticle.Id
+        ka_id = self.get_knowledge_article_id(kav_id)
+        if not ka_id:
+            errors.append(f"Could not resolve KnowledgeArticleId for kav_id={kav_id}")
+            return {"tagged": tagged, "skipped": skipped, "errors": errors}
+
+        # 2. Resolve ProductCode → Product2.Id
+        code_to_id = self.get_product_ids_by_codes(product_codes)
+        for code in product_codes:
+            if code not in code_to_id:
+                skipped.append(code)
+
+        # 3. Create one KMProductAttribute per product
+        for code, prod_id in code_to_id.items():
+            try:
+                self.create_sobject("KMProductAttribute", {
+                    "KnowledgeArticleId": ka_id,
+                    "ProductId": prod_id,
+                })
+                tagged.append(code)
+            except SalesforceError as exc:
+                # Duplicate entries (already tagged) return 400 — treat as OK
+                if exc.status == 400 and "DUPLICATE_VALUE" in str(exc.content).upper():
+                    tagged.append(code)
+                else:
+                    errors.append(f"{code}: {exc}")
+
+        return {"tagged": tagged, "skipped": skipped, "errors": errors}

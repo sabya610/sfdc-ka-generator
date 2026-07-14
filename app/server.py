@@ -260,6 +260,26 @@ def api_publish():
         except SalesforceError:
             pass
 
+    # ── Product Tagging (KMProductAttribute) ──────────────────────────────────
+    # Convention:
+    #   PCAI / AIE / EZUA  →  R4T71AAE  (HPE Ezmeral Machine Learning Ops)
+    #   Data Fabric        →  R9E30AAE  (HPE Ezmeral Data Fabric – Customer Managed)
+    #
+    # The product key is resolved from the request; the catalog supplies the
+    # default tag list. The caller may also pass "product_tags" to override.
+    # -----------------------------------------------------------------------------
+    product_tag_result: dict = {}
+    if kav_id:
+        product_key = (data.get("product") or "container-platform").strip()
+        catalog_entry = PRODUCT_CATALOG.get(product_key, {})
+        # Caller-supplied tags take precedence; fall back to catalog defaults.
+        product_tags: List[str] = data.get("product_tags") or catalog_entry.get("product_tags") or []
+        if product_tags:
+            try:
+                product_tag_result = sf.tag_article_products(kav_id, product_tags)
+            except Exception as exc:  # noqa: BLE001
+                product_tag_result = {"tagged": [], "skipped": [], "errors": [str(exc)]}
+
     article_url = f"{SF_URL}/lightning/r/Knowledge__kav/{kav_id}/view" if kav_id else None
     return jsonify({
         "created": True,
@@ -267,6 +287,7 @@ def api_publish():
         "article_number": article_number,
         "article_url": article_url,
         "owner_warning": owner_warning,
+        "product_tagging": product_tag_result,
     })
 
 

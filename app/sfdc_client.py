@@ -249,83 +249,55 @@ class Salesforce:
                 payload[name] = value
         return self.create_sobject("Knowledge__kav", payload)
 
-    def get_product_ids_by_codes(self, product_codes: List[str]) -> Dict[str, str]:
-        """Return {ProductCode: Id} for active Product2 records matching the given codes.
-
-        Used to resolve product series numbers (e.g. R4T71AAE, R9E30AAE) to
-        their Salesforce Product2 Ids before creating KMProductAttribute records.
-        """
-        if not product_codes:
-            return {}
-        safe_codes = [c.replace("'", "") for c in product_codes]
-        codes_in = "', '".join(safe_codes)
-        soql = (
-            f"SELECT Id, ProductCode FROM Product2 "
-            f"WHERE ProductCode IN ('{codes_in}') AND IsActive = true"
-        )
-        records = self.query_all(soql)
-        return {r["ProductCode"]: r["Id"] for r in records}
-
-    def get_knowledge_article_id(self, kav_id: str) -> Optional[str]:
-        """Resolve the master KnowledgeArticle.Id from a Knowledge__kav version Id.
-
-        KMProductAttribute requires the master ``KnowledgeArticleId``, not the
-        version record Id returned by ``create_sobject('Knowledge__kav', ...)``.
-        """
-        safe = kav_id.replace("'", "")
-        soql = f"SELECT KnowledgeArticleId FROM Knowledge__kav WHERE Id = '{safe}'"
-        records = self.query_all(soql)
-        return records[0]["KnowledgeArticleId"] if records else None
-
-    def tag_article_products(
+    def create_product_tag(
         self,
         kav_id: str,
-        product_codes: List[str],
+        tag: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """Create KMProductAttribute records that link a Knowledge Article to
-        one or more product series.
+        """Create "Product Tagging" for a KA (two-step).
 
-        Convention (from screenshots):
-          PCAI / AIE / EZUA  →  product_codes = ["R4T71AAE"]
-          Data Fabric        →  product_codes = ["R9E30AAE"]  (plus any extras)
+        The integration user cannot reference the shared master
+        ``KM_ProductAttribute__c`` catalog records (cross-reference access is
+        denied), so we first create our own ``KM_ProductAttribute__c`` linked
+        to this KA, then a ``KM_ProductAttributeTag__c`` pointing at it.
 
-        Args:
-            kav_id:        Id of the Knowledge__kav draft (returned by create_knowledge_draft).
-            product_codes: List of HPE product series numbers, e.g. ["R4T71AAE"].
-
-        Returns:
-            Dict with keys "tagged" (list of ProductCode), "skipped" (not found in Product2),
-            "errors" (list of error strings).
+        ``tag`` comes from the product catalog:
+            {"name": "HPEEZMRNESSPRE",
+             "description": "HPE Ezmeral Runtime Enterprise Software",
+             "hierarchy": "aGS1V000000g6UlWAI",
+             "product_line_name": "CONT PLT SW"}
         """
-        tagged: List[str] = []
-        skipped: List[str] = []
-        errors: List[str] = []
+        if not tag or not tag.get("name"):
+            return {"tagged": False, "error": "no product_tag configured"}
 
-        # 1. Resolve the master KnowledgeArticle.Id
-        ka_id = self.get_knowledge_article_id(kav_id)
-        if not ka_id:
-            errors.append(f"Could not resolve KnowledgeArticleId for kav_id={kav_id}")
-            return {"tagged": tagged, "skipped": skipped, "errors": errors}
+        name = tag["name"]
+        description = tag.get("description") or name
 
-        # 2. Resolve ProductCode → Product2.Id
-        code_to_id = self.get_product_ids_by_codes(product_codes)
-        for code in product_codes:
-            if code not in code_to_id:
-                skipped.append(code)
+        # 1. Create our own product-attribute record for this article.
+        attr_payload = {
+            "Name": name,
+            "Knowledge__c": kav_id,
+            "Product_Description__c": description,
+        }
+        if tag.get("hierarchy"):
+            attr_payload["Product_Hierarchy__c"] = tag["hierarchy"]
+        if tag.get("product_line_name"):
+            attr_payload["Product_Line_Name__c"] = tag["product_line_name"]
+        try:
+            attr = self.create_sobject("KM_ProductAttribute__c", attr_payload)
+            attr_id = attr.get("id")
+        except SalesforceError as exc:
+            return {"tagged": False, "error": f"attribute: {exc}", "name": name}
 
-        # 3. Create one KMProductAttribute per product
-        for code, prod_id in code_to_id.items():
-            try:
-                self.create_sobject("KMProductAttribute", {
-                    "KnowledgeArticleId": ka_id,
-                    "ProductId": prod_id,
-                })
-                tagged.append(code)
-            except SalesforceError as exc:
-                # Duplicate entries (already tagged) return 400 — treat as OK
-                if exc.status == 400 and "DUPLICATE_VALUE" in str(exc.content).upper():
-                    tagged.append(code)
-                else:
-                    errors.append(f"{code}: {exc}")
+        # 2. Create the tag row linking the KA to that attribute.
+        try:
+            res = self.create_sobject("KM_ProductAttributeTag__c", {
+                "Name": name,
+                "Knowledge__c": kav_id,
+                "KMProductAttribute__c": attr_id,
+                "ProductTag_Description__c": description,
+            })
+            return {"tagged": True, "id": res.get("id"), "name": name}
+        except SalesforceError as exc:
+            return {"tagged": False, "error": f"tag: {exc}", "name": name}
 
-        return {"tagged": tagged, "skipped": skipped, "errors": errors}

@@ -379,6 +379,7 @@
           submit_for_review: $('submitReview').checked,
           article_type: $('aArticleType').value,
           disclosure_level: $('aDisclosure').value,
+          product: $('product').value,
           product_group: (currentArticle||{}).product_group,
           product_queue: (currentArticle||{}).product_queue,
           product_line: (currentArticle||{}).product_line,
@@ -390,6 +391,11 @@
         if (r.result && r.result.validation_status) txt += ` [${r.result.validation_status}]`;
         msg.innerHTML = txt + (r.article_url ? ` — <a href="${r.article_url}" target="_blank">Open in SFDC</a>` : '');
         msg.className = 'ok';
+        if (r.product_tagging && r.product_tagging.tagged) {
+          msg.innerHTML += `<br/><span class="ok">\u2705 Product tagged: ${r.product_tagging.name}</span>`;
+        } else if (r.product_tagging && r.product_tagging.error) {
+          msg.innerHTML += `<br/><span class="err">\u26A0 Product tag: ${r.product_tagging.error}</span>`;
+        }
         if (r.owner_warning) {
           msg.innerHTML += `<br/><span class="err">\u26A0 ${r.owner_warning}</span>`;
         }

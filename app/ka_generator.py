@@ -44,8 +44,13 @@ PRODUCT_CATALOG: Dict[str, Dict[str, Any]] = {
         "product_queue": "HPE Ezmeral",
         "product_line": "CONT PLT SW (RM)",
         "environments": ["AIE 1.x", "PCAI 1.x", "EZUA 1.x"],
-        # Single product series tag for PCAI / AIE / EZUA KAs
-        "product_tags": ["R4T71AAE"],
+        # Product Tagging (KM_ProductAttributeTag__c) → HPE Ezmeral Runtime Enterprise.
+        "product_tag": {
+            "name": "HPEEZMRNESSPRE",
+            "description": "HPE Ezmeral Runtime Enterprise Software",
+            "hierarchy": "aGS1V000000g6UlWAI",
+            "product_line_name": "CONT PLT SW",
+        },
     },
     "datafabric": {
         "label": "HPE Ezmeral Data Fabric",
@@ -53,10 +58,12 @@ PRODUCT_CATALOG: Dict[str, Dict[str, Any]] = {
         "product_queue": "HPE Ezmeral",
         "product_line": "DATA FABRIC SW (PU)",
         "environments": ["Data Fabric 7.x"],
-        # Primary Data Fabric series; additional series are resolved automatically
-        # at publish time by querying all active Product2 records whose
-        # ProductCode starts with the known DF series prefixes.
-        "product_tags": ["R9E30AAE"],
+        "product_tag": {
+            "name": "HPEEZMRNESSPRE",
+            "description": "HPE Ezmeral Runtime Enterprise Software",
+            "hierarchy": "aGS1V000000g6UlWAI",
+            "product_line_name": "CONT PLT SW",
+        },
     },
 }
 
@@ -372,6 +379,7 @@ def collect_resolution_steps(
     useful = [t for t in tasks if _is_useful_task(t)]
 
     steps: List[str] = []
+    seen_resolutions: set = set()
     resolution_prefix: List[str] = []
     extracted_issue: str = ""
     extracted_cause: str = ""
@@ -404,6 +412,13 @@ def collect_resolution_steps(
             continue
 
         step_body = _mask_sensitive(parsed["resolution"])
+
+        # De-duplicate: multiple tasks (e.g. "Root Cause analysis" + the main
+        # task) often carry an identical Resolution section. Keep only the first.
+        norm = re.sub(r"\s+", " ", step_body).strip().lower()
+        if norm in seen_resolutions:
+            continue
+        seen_resolutions.add(norm)
 
         subject = _clean(task.get("Subject") or "")
         header = f"[Task: {subject}]" if subject else "[Task]"

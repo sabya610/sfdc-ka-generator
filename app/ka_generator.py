@@ -531,8 +531,8 @@ ISSUE:
 CAUSE:
 <technical root cause explanation>
 RESOLUTION:
-1. <step one — use `command` notation for CLI>
-2. <step two>
+1. <step one — include the EXACT CLI command(s) to run, e.g. `kubectl ...`>
+2. <step two — never write "run the following commands" without showing the commands>
 ...
 
 <END>"""
@@ -581,7 +581,7 @@ def build_rag_llm_article(
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=360) as resp:
+        with urllib.request.urlopen(req, timeout=840) as resp:
             result = _json.loads(resp.read())
         text = result.get("response", "")
         if not text:
@@ -598,14 +598,29 @@ def build_rag_llm_article(
         if secs.get("cause"):
             base.cause = secs["cause"]
         if secs.get("resolution"):
-            # Split numbered steps into list
-            step_lines = [
-                re.sub(r"^\d+\.\s*", "", ln).strip()
-                for ln in secs["resolution"].splitlines()
-                if ln.strip() and re.match(r"^\d+\.", ln.strip())
-            ]
-            if step_lines:
-                base.steps = step_lines
+            # Group each numbered step with its following command/continuation
+            # lines so CLI commands on their own line are never dropped.
+            steps: List[str] = []
+            current: Optional[str] = None
+            for raw in secs["resolution"].splitlines():
+                ln = raw.rstrip()
+                if not ln.strip():
+                    continue
+                if ln.strip() in ("```", "~~~") or ln.strip().startswith("```"):
+                    continue  # drop code-fence markers, keep the commands inside
+                m = re.match(r"^\s*\d+[.)]\s*(.*)$", ln)
+                if m:
+                    if current is not None:
+                        steps.append(current.strip())
+                    current = m.group(1).strip()
+                else:
+                    body = ln.strip()
+                    current = body if current is None else current + "\n" + body
+            if current is not None:
+                steps.append(current.strip())
+            steps = [s for s in steps if s]
+            if steps:
+                base.steps = steps
             base.resolution = secs["resolution"]
         base.generator = "rag-llm:llama3.1-8b"
     except Exception:  # never fail KA generation due to LLM error

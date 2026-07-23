@@ -23,5 +23,5 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
     CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz').status==200 else 1)"
 
 # Gunicorn serves the Flask app object (app.server:app)
-# --timeout 600: LLM (llama-8b CPU) inference for a full KA can take 2-4 minutes.
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "2", "--timeout", "600", "app.server:app"]
+# --timeout 900: LLM (llama-8b CPU) inference for a full KA can take 4-7 minutes under load.
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "2", "--timeout", "900", "app.server:app"]

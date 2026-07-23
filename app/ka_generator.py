@@ -574,14 +574,14 @@ def build_rag_llm_article(
     )
 
     try:
-        payload = _json.dumps({"prompt": prompt, "max_tokens": 1500}).encode()
+        payload = _json.dumps({"prompt": prompt, "max_tokens": 1024}).encode()
         req = urllib.request.Request(
             endpoint,
             data=payload,
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=120) as resp:
+        with urllib.request.urlopen(req, timeout=360) as resp:
             result = _json.loads(resp.read())
         text = result.get("response", "")
         if not text:

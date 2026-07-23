@@ -2,8 +2,8 @@ apiVersion: v2
 name: sfdc-ka-generator
 description: HPE Ezmeral SFDC Knowledge Article generator - reads support cases, task steps and resolutions to draft Knowledge Articles.
 type: application
-version: 0.3.4
-appVersion: "0.1.22"
+version: 0.3.5
+appVersion: "0.1.23"
 keywords:
   - hpe
   - ezmeral

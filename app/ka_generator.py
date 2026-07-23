@@ -538,8 +538,50 @@ RESOLUTION:
 <END>"""
 
 
+# Lines that mark the end of the article — the LLM often appends trailer chatter
+# ("END", "<FINAL>", "The final answer is:", or a full re-emission of the article).
+# Uppercase END/FINAL tokens are matched case-sensitively so a legitimate step
+# line/continuation starting with lowercase "end ..." is not truncated.
+_LLM_END_RE = re.compile(r"^\s*[<*_`#]*\s*(?:END\b|END\s+OF\s+ARTICLE\b|FINAL\b)")
+_LLM_END_PHRASE_RE = re.compile(
+    r"^\s*[<*_`#]*\s*(?:the final (?:answer|article)\b|end of note\b|here is (?:the|my)\b)",
+    re.I,
+)
+_LLM_SECTION_LABELS = "TITLE|SUMMARY|ISSUE|CAUSE|RESOLUTION"
+# Inline / bold-wrapped section labels: **TITLE:** , __ISSUE__: , ## CAUSE:
+_LLM_INLINE_LABEL_RE = re.compile(
+    r"[*_]{2,}\s*(" + _LLM_SECTION_LABELS + r")\s*:\s*[*_]{0,4}", re.I
+)
+_LLM_LINE_LABEL_RE = re.compile(
+    r"(?im)^[ \t]*[#>*_`]{0,4}[ \t]*(" + _LLM_SECTION_LABELS + r")[ \t]*:[ \t]*[*_`]{0,4}"
+)
+
+
+def _normalize_llm_text(text: str) -> str:
+    """Strip markdown decoration around section labels and cut off trailer chatter
+    / re-emitted duplicate articles so they don't leak into the parsed fields."""
+    # 1. Break bold-wrapped inline labels onto their own line: "**SUMMARY:**" -> "\nSUMMARY: "
+    text = _LLM_INLINE_LABEL_RE.sub(lambda m: "\n" + m.group(1).upper() + ": ", text)
+    # 2. Normalize line-start decorated labels: "## TITLE:" / "**ISSUE:**" -> "TITLE:" / "ISSUE:"
+    text = _LLM_LINE_LABEL_RE.sub(lambda m: m.group(1).upper() + ": ", text)
+    # 3. Truncate at the first end-marker, or when the article restarts (2nd TITLE:).
+    out: List[str] = []
+    seen_title = False
+    for ln in text.splitlines():
+        s = ln.strip()
+        if _LLM_END_RE.match(s) or _LLM_END_PHRASE_RE.match(s):
+            break
+        if re.match(r"(?i)^TITLE:", s):
+            if seen_title:
+                break
+            seen_title = True
+        out.append(ln)
+    return "\n".join(out)
+
+
 def _parse_llm_sections(text: str) -> Dict[str, str]:
     """Extract TITLE/SUMMARY/ISSUE/CAUSE/RESOLUTION sections from LLM plain-text output."""
+    text = _normalize_llm_text(text)
     patterns = {
         "title":      re.compile(r"TITLE:\s*(.+?)(?=\n(?:SUMMARY|ISSUE|CAUSE|RESOLUTION):|$)", re.S | re.I),
         "summary":    re.compile(r"SUMMARY:\s*(.+?)(?=\n(?:TITLE|ISSUE|CAUSE|RESOLUTION):|$)", re.S | re.I),
@@ -608,6 +650,11 @@ def build_rag_llm_article(
                     continue
                 if ln.strip() in ("```", "~~~") or ln.strip().startswith("```"):
                     continue  # drop code-fence markers, keep the commands inside
+                if _LLM_END_RE.match(ln) or _LLM_END_PHRASE_RE.match(ln):
+                    break  # stop at any trailing end-marker / chatter
+                # skip lines that are only markdown decoration (**, ---, ===, ##)
+                if set(ln.strip()) <= set("*_#-=~ `"):
+                    continue
                 m = re.match(r"^\s*\d+[.)]\s*(.*)$", ln)
                 if m:
                     if current is not None:
@@ -618,7 +665,8 @@ def build_rag_llm_article(
                     current = body if current is None else current + "\n" + body
             if current is not None:
                 steps.append(current.strip())
-            steps = [s for s in steps if s]
+            # drop empty / decoration-only steps (e.g. a stray "**")
+            steps = [s for s in steps if s and (set(s) - set("*_#-=~ `"))]
             if steps:
                 base.steps = steps
             base.resolution = secs["resolution"]
